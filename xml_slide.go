@@ -55,13 +55,152 @@ func (s *Slide) generateSlide() string {
 		case *videoObject:
 			sb.WriteString(s.generateVideo(o, objectId))
 			objectId++
+		case *audioObject:
+			sb.WriteString(s.generateAudio(o, objectId))
+			objectId++
 		}
 	}
 
 	sb.WriteString(`</p:spTree>`)
 	sb.WriteString(`</p:cSld>`)
 	sb.WriteString(`<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>`)
+
+	// 生成时间轴（用于自动播放媒体）
+	timing := s.generateTiming()
+	if timing != "" {
+		sb.WriteString(timing)
+	}
+
 	sb.WriteString(`</p:sld>`)
+
+	return sb.String()
+}
+
+// generateTiming 生成时间轴XML（用于自动播放媒体）
+func (s *Slide) generateTiming() string {
+	// 收集需要自动播放的媒体对象
+	var autoPlayMedia []struct {
+		id      int
+		isVideo bool
+		loop    bool
+	}
+
+	objectId := 2
+	for _, obj := range s.objects {
+		switch o := obj.(type) {
+		case *videoObject:
+			if o.options.AutoPlay {
+				autoPlayMedia = append(autoPlayMedia, struct {
+					id      int
+					isVideo bool
+					loop    bool
+				}{objectId, true, o.options.Loop})
+			}
+			objectId++
+		case *audioObject:
+			if o.options.AutoPlay {
+				autoPlayMedia = append(autoPlayMedia, struct {
+					id      int
+					isVideo bool
+					loop    bool
+				}{objectId, false, o.options.Loop})
+			}
+			objectId++
+		default:
+			objectId++
+		}
+	}
+
+	if len(autoPlayMedia) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`<p:timing>`)
+	sb.WriteString(`<p:tnLst>`)
+	sb.WriteString(`<p:par>`)
+	sb.WriteString(`<p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot">`)
+	sb.WriteString(`<p:childTnLst>`)
+	sb.WriteString(`<p:seq concurrent="1" nextAc="seek">`)
+	sb.WriteString(`<p:cTn id="2" dur="indefinite" nodeType="mainSeq">`)
+	sb.WriteString(`<p:childTnLst>`)
+
+	tnId := 3
+	for i, media := range autoPlayMedia {
+		sb.WriteString(`<p:par>`)
+		sb.WriteString(`<p:cTn id="`)
+		sb.WriteString(itoa(tnId))
+		tnId++
+		sb.WriteString(`" fill="hold">`)
+		sb.WriteString(`<p:stCondLst>`)
+		if i == 0 {
+			// 第一个媒体在幻灯片显示时开始
+			sb.WriteString(`<p:cond delay="0"/>`)
+		} else {
+			// 后续媒体也同时开始
+			sb.WriteString(`<p:cond delay="0"/>`)
+		}
+		sb.WriteString(`</p:stCondLst>`)
+		sb.WriteString(`<p:childTnLst>`)
+		sb.WriteString(`<p:par>`)
+		sb.WriteString(`<p:cTn id="`)
+		sb.WriteString(itoa(tnId))
+		tnId++
+		sb.WriteString(`" fill="hold">`)
+		sb.WriteString(`<p:stCondLst>`)
+		sb.WriteString(`<p:cond delay="0"/>`)
+		sb.WriteString(`</p:stCondLst>`)
+		sb.WriteString(`<p:childTnLst>`)
+		sb.WriteString(`<p:par>`)
+		sb.WriteString(`<p:cTn id="`)
+		sb.WriteString(itoa(tnId))
+		tnId++
+		sb.WriteString(`" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="afterEffect">`)
+		sb.WriteString(`<p:stCondLst>`)
+		sb.WriteString(`<p:cond delay="0"/>`)
+		sb.WriteString(`</p:stCondLst>`)
+		sb.WriteString(`<p:childTnLst>`)
+
+		// 媒体命令
+		sb.WriteString(`<p:cmd type="call" cmd="playFrom(0.0)">`)
+		sb.WriteString(`<p:cBhvr>`)
+		sb.WriteString(`<p:cTn id="`)
+		sb.WriteString(itoa(tnId))
+		tnId++
+		sb.WriteString(`" dur="1" fill="hold"/>`)
+		sb.WriteString(`<p:tgtEl>`)
+		sb.WriteString(`<p:spTgt spid="`)
+		sb.WriteString(itoa(media.id))
+		sb.WriteString(`"/>`)
+		sb.WriteString(`</p:tgtEl>`)
+		sb.WriteString(`</p:cBhvr>`)
+		sb.WriteString(`</p:cmd>`)
+
+		sb.WriteString(`</p:childTnLst>`)
+		sb.WriteString(`</p:cTn>`)
+		sb.WriteString(`</p:par>`)
+		sb.WriteString(`</p:childTnLst>`)
+		sb.WriteString(`</p:cTn>`)
+		sb.WriteString(`</p:par>`)
+		sb.WriteString(`</p:childTnLst>`)
+		sb.WriteString(`</p:cTn>`)
+		sb.WriteString(`</p:par>`)
+	}
+
+	sb.WriteString(`</p:childTnLst>`)
+	sb.WriteString(`</p:cTn>`)
+	sb.WriteString(`<p:prevCondLst>`)
+	sb.WriteString(`<p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond>`)
+	sb.WriteString(`</p:prevCondLst>`)
+	sb.WriteString(`<p:nextCondLst>`)
+	sb.WriteString(`<p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond>`)
+	sb.WriteString(`</p:nextCondLst>`)
+	sb.WriteString(`</p:seq>`)
+	sb.WriteString(`</p:childTnLst>`)
+	sb.WriteString(`</p:cTn>`)
+	sb.WriteString(`</p:par>`)
+	sb.WriteString(`</p:tnLst>`)
+	sb.WriteString(`</p:timing>`)
 
 	return sb.String()
 }

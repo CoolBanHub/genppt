@@ -11,6 +11,7 @@
 - ✅ **图片支持** - PNG、JPEG、GIF等格式
 - ✅ **图表支持** - 柱状图、折线图、饼图、环形图、面积图
 - ✅ **视频支持** - MP4、MOV、AVI等格式
+- ✅ **音频支持** - MP3、WAV、M4A等格式，支持背景音乐
 - ✅ **Markdown支持** - 从Markdown直接生成PPT
 - ✅ **多种导出** - 文件、字节数组、io.Writer
 
@@ -186,6 +187,41 @@ slide.SetBackground(genppt.BackgroundOptions{
 Color: "#1E3A5F", // 纯色背景
 })
 ```
+
+### 音频
+
+```go
+// 从文件添加音频
+slide.AddAudio(genppt.AudioOptions{
+Path:     "/path/to/audio.mp3",
+X:        1.0,
+Y:        1.0,
+Width:    0.5,  // 音频图标大小
+Height:   0.5,
+AutoPlay: true, // 自动播放
+Loop:     true, // 循环播放
+})
+
+// 背景音乐（隐藏图标）
+slide.AddAudio(genppt.AudioOptions{
+Path:     "/path/to/bgm.mp3",
+X:        0,
+Y:        0,
+Hidden:   true, // 隐藏音频图标
+AutoPlay: true,
+Loop:     true,
+})
+
+// 从字节数据添加
+slide.AddAudio(genppt.AudioOptions{
+Data:     audioBytes,
+X:        1.0,
+Y:        1.0,
+AutoPlay: false,
+})
+```
+
+**支持的音频格式**: MP3, WAV, WMA, M4A, AAC, OGG, FLAC
 
 ## Markdown 支持
 

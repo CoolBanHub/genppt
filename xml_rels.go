@@ -199,6 +199,27 @@ func (s *Slide) generateSlideRels() string {
 		}
 	}
 
+	// 音频关系
+	for _, obj := range s.objects {
+		if audio, ok := obj.(*audioObject); ok {
+			// 找到音频在media列表中的索引
+			audioIdx := 1
+			for i, m := range s.presentation.mediaFiles {
+				if m.rID == audio.rID {
+					audioIdx = i + 1
+					break
+				}
+			}
+			sb.WriteString(`<Relationship Id="`)
+			sb.WriteString(audio.rID)
+			sb.WriteString(`" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio" Target="../media/audio`)
+			sb.WriteString(itoa(audioIdx))
+			sb.WriteString(".")
+			sb.WriteString(audio.mediaExt)
+			sb.WriteString(`"/>`)
+		}
+	}
+
 	sb.WriteString(`</Relationships>`)
 	return sb.String()
 }

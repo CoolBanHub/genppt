@@ -95,7 +95,7 @@ func getImageMIME(ext string) string {
 	}
 }
 
-// getMediaMIME 获取媒体MIME类型（图片或视频）
+// getMediaMIME 获取媒体MIME类型（图片、视频或音频）
 func getMediaMIME(ext string) string {
 	ext = strings.ToLower(ext)
 	// 先检查视频类型
@@ -112,6 +112,21 @@ func getMediaMIME(ext string) string {
 		return "video/mpeg"
 	case "webm":
 		return "video/webm"
+	}
+	// 检查音频类型
+	switch ext {
+	case "mp3":
+		return "audio/mpeg"
+	case "wav":
+		return "audio/wav"
+	case "wma":
+		return "audio/x-ms-wma"
+	case "m4a", "aac":
+		return "audio/mp4"
+	case "ogg":
+		return "audio/ogg"
+	case "flac":
+		return "audio/flac"
 	}
 	// 否则返回图片类型
 	return getImageMIME(ext)
