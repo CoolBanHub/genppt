@@ -278,10 +278,15 @@ func (p *htmlParser) walkNode(n *html.Node) {
 				styleMap := parseStyle(styleBody) // Reuse parseStyle logic
 				if bg := styleMap["background-color"]; bg != "" {
 					p.globalBackgroundColor = bg
-					fmt.Fprintf(os.Stderr, "DEBUG: Found Global Background in Style: %s\n", bg)
+				} else if bg := styleMap["background"]; bg != "" {
+					p.globalBackgroundColor = extractHexColor(bg)
+				}
+
+				if p.globalBackgroundColor != "" {
+					fmt.Fprintf(os.Stderr, "DEBUG: Found Global Background in Style: %s\n", p.globalBackgroundColor)
 					// 如果当前有正在处理的slide（虽然通常style在head里，但防止万一），更新它
 					if p.current != nil && p.current.backgroundColor == "" {
-						p.current.backgroundColor = bg
+						p.current.backgroundColor = p.globalBackgroundColor
 					}
 				}
 			}
@@ -294,6 +299,12 @@ func (p *htmlParser) walkNode(n *html.Node) {
 			if bg == "" {
 				bg = p.getAttr(n, "bgcolor")
 			}
+			if bg == "" {
+				bg = styleMap["background"]
+			}
+			// 尝试提取 Hex
+			bg = extractHexColor(bg)
+
 			if bg != "" {
 				p.globalBackgroundColor = bg
 				fmt.Fprintf(os.Stderr, "DEBUG: Found Global Background in Body: %s\n", bg)
@@ -302,6 +313,28 @@ func (p *htmlParser) walkNode(n *html.Node) {
 				}
 			}
 			// Don't return, recurse children
+
+		case "div":
+			// 解析 div 背景
+			styleMap := parseStyle(p.getAttr(n, "style"))
+			bg := styleMap["background-color"]
+			if bg == "" {
+				bg = styleMap["background"]
+			}
+			bg = extractHexColor(bg)
+
+			if bg != "" {
+				p.globalBackgroundColor = bg
+				fmt.Fprintf(os.Stderr, "DEBUG: Found Global Background in DIV: %s\n", bg)
+				if p.current != nil && p.current.backgroundColor == "" {
+					p.current.backgroundColor = bg
+				}
+			}
+			// 继续处理子节点
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				p.walkNode(c)
+			}
+			return
 
 		case "hr", "section":
 			// 分隔符或section创建新幻灯片
@@ -642,25 +675,15 @@ func FromHTMLWithOptions(htmlContent string, opts HTMLOptions) *Presentation {
 			})
 		}
 
-		yPos := 0.5 // 当前Y位置
-
-		// 布局状态管理
-		var (
-			hasSideImg bool    // 是否有侧边图片
-			sideImgPos string  // "left" 或 "right"
-			sideImgY   float64 // 侧边图片开始Y
-			sideImgH   float64 // 侧边图片高度
-		)
+		state := &renderState{
+			yPos: 0.5,
+		}
 
 		// 辅助函数：新起一页
 		newSlide := func() {
 			slide = pres.AddSlide()
 			// 同样应用背景
 			bg := opts.SlideBackground
-			// 注意：这里我们使用 parse 好的 slide background
-			// 但是 htmlSlide 是 for loop variable，它代表整个 Section 的属性
-			// 如果这个 Section 是因为内容 overflow 导致的分页，
-			// 通常我们希望保持相同的背景。
 			if htmlSlide.backgroundColor != "" {
 				bg = htmlSlide.backgroundColor
 			}
@@ -670,19 +693,21 @@ func FromHTMLWithOptions(htmlContent string, opts HTMLOptions) *Presentation {
 					Color: bg,
 				})
 			}
-			yPos = 0.5
-			hasSideImg = false
-			sideImgY = 0
-			sideImgH = 0
+			state.yPos = 0.5
+			state.hasSideImg = false
+			state.sideImgY = 0
+			state.sideImgH = 0
 		}
 
-		// 辅助函数：检查是否需要清除浮动（当内容超过图片高度时）
-		checkClearFloat := func(currentY float64) {
-			if hasSideImg && currentY > sideImgY+sideImgH {
-				hasSideImg = false
-			}
-		}
+		// 布局状态管理
+		// var (
+		// 	hasSideImg bool    // 是否有侧边图片
+		// 	sideImgPos string  // "left" 或 "right"
+		// 	sideImgY   float64 // 侧边图片开始Y
+		// 	sideImgH   float64 // 侧边图片高度
+		// )
 
+		// 添加标题
 		// 添加标题
 		if htmlSlide.title != "" {
 			titleColor := opts.HeadingColor
@@ -691,7 +716,7 @@ func FromHTMLWithOptions(htmlContent string, opts HTMLOptions) *Presentation {
 			}
 			slide.AddText(htmlSlide.title, TextOptions{
 				X:         0.5,
-				Y:         yPos,
+				Y:         state.yPos,
 				Width:     9.0,
 				Height:    0.8,
 				FontSize:  opts.HeadingFontSize,
@@ -700,495 +725,94 @@ func FromHTMLWithOptions(htmlContent string, opts HTMLOptions) *Presentation {
 				Fill:      htmlSlide.titleBackground,
 				Align:     Align(htmlSlide.titleAlign),
 			})
-			yPos += 1.0
+			state.yPos += 1.0
 		}
 
-		// 添加内容
+		// Layout Optimization: Hoist floating images to the top
+		// This ensures that the image is rendered first, setting the 'hasSideImg' state,
+		// so that subsequent text blocks are correctly width-constrained.
+		var floats []htmlBlock
+		var flow []htmlBlock
+		hasFloats := false
 		for _, block := range htmlSlide.content {
-			checkClearFloat(yPos)
-
-			// 标题总是清除浮动 (但如果不是 H1，且处于侧边栏模式，则尝试保留)
-			if block.blockType == "heading" && hasSideImg && block.level == 1 {
-				if yPos < sideImgY+sideImgH {
-					yPos = sideImgY + sideImgH + 0.2
-				}
-				hasSideImg = false
-			}
-
-			switch block.blockType {
-			case "heading":
-				fontSize := 24.0
-				if block.level == 2 {
-					fontSize = 28.0
-				} else if block.level >= 5 {
-					fontSize = 20.0
-				}
-				// 使用自定义样式
-				if block.styleSize > 0 {
-					fontSize = float64(block.styleSize)
-				}
-				fontColor := opts.HeadingColor
-				if block.styleColor != "" {
-					fontColor = block.styleColor
-				}
-
-				fmt.Fprintf(os.Stderr, "DEBUG: Rendering Heading: '%s' FinalColor=%s (StyleColor=%s)\n", block.text, fontColor, block.styleColor)
-
-				textX := 0.5
-				textY := yPos
-				textWidth := 9.0
-
-				// 处理左右布局的标题位置
-				if hasSideImg && block.styleX == 0 {
-					textWidth = 4.5
-					if sideImgPos == "left" {
-						textX = 5.0 // 图片在左，文字在右
-					} else {
-						textX = 0.5 // 图片在右，文字在左
-					}
-				}
-
-				if block.styleX > 0 {
-					textX = block.styleX
-				}
-				if block.styleY > 0 {
-					textY = block.styleY
-				}
-				// 估算高度
-				estHeight, _ := estimateLines(block.text, fontSize, textWidth)
-
-				// 分页检查
-				if yPos+estHeight > 5.2 {
-					newSlide()
-					// 重置布局参数
-					textX = 0.5
-					textY = yPos
-					textWidth = 9.0
-					if block.styleX > 0 {
-						textX = block.styleX
-					}
-					if block.styleY > 0 {
-						textY = block.styleY
-					}
-					// 重新估算高度（宽度可能变了）
-					estHeight, _ = estimateLines(block.text, fontSize, textWidth)
-				}
-
-				slide.AddText(block.text, TextOptions{
-					X:         textX,
-					Y:         textY,
-					Width:     textWidth,
-					Height:    estHeight,
-					FontSize:  fontSize,
-					FontColor: fontColor,
-					Bold:      true,
-					Fill:      block.styleBackground,
-					Align:     Align(block.styleAlign),
-				})
-				// 总是更新 yPos，防止重叠
-				if textY+estHeight+0.2 > yPos {
-					yPos = textY + estHeight + 0.2
-				}
-
-			case "text":
-				fontSize := opts.BodyFontSize
-				if block.styleSize > 0 {
-					fontSize = float64(block.styleSize)
-				}
-				fontColor := opts.BodyColor
-				if block.styleColor != "" {
-					fontColor = block.styleColor
-				}
-
-				textX := 0.5
-				textWidth := 9.0
-
-				// 处理左右布局的文字位置
-				if hasSideImg && block.styleX == 0 {
-					textWidth = 4.5
-					if sideImgPos == "left" {
-						textX = 5.0 // 图片在左，文字在右
-					} else {
-						textX = 0.5 // 图片在右，文字在左
-					}
-				}
-
-				textY := yPos
-				if block.styleX > 0 {
-					textX = block.styleX
-				}
-				if block.styleY > 0 {
-					textY = block.styleY
-				}
-
-				// 估算高度
-				estHeight, _ := estimateLines(block.text, fontSize, textWidth)
-
-				// 分页检查
-				if yPos+estHeight > 5.2 {
-					newSlide()
-					textX = 0.5
-					if block.styleX > 0 {
-						textX = block.styleX
-					}
-					textY = yPos // 重置Y
-					if block.styleY > 0 {
-						textY = block.styleY
-					}
-					textWidth = 9.0 // 重置宽度到全宽
-					estHeight, _ = estimateLines(block.text, fontSize, textWidth)
-				}
-
-				slide.AddText(block.text, TextOptions{
-					X:         textX,
-					Y:         textY,
-					Width:     textWidth,
-					Height:    estHeight,
-					FontSize:  fontSize,
-					FontColor: fontColor,
-					Fill:      block.styleBackground,
-					Align:     Align(block.styleAlign),
-				})
-				// 总是更新 yPos
-				if textY+estHeight+0.2 > yPos {
-					yPos = textY + estHeight + 0.2
-				}
-
-			case "bullet":
-				for _, line := range block.lines {
-					text := "• " + line.text
-
-					textX := 0.7
-					textWidth := 8.5
-
-					// 处理左右布局
-					if hasSideImg {
-						textWidth = 4.2
-						if sideImgPos == "left" {
-							textX = 5.2
-						} else {
-							textX = 0.7
-						}
-					}
-
-					// 确定颜色：优先用行内颜色，其次用块级颜色
-					lineColor := opts.BodyColor
-					if block.styleColor != "" {
-						lineColor = block.styleColor
-					}
-					if line.color != "" {
-						lineColor = line.color
-					}
-
-					fmt.Fprintf(os.Stderr, "DEBUG: Bullet '%s' resolved color: %s (Block: %s, Line: %s)\n", text, lineColor, block.styleColor, line.color)
-
-					// 估算高度
-					estHeight, _ := estimateLines(text, opts.BodyFontSize, textWidth)
-
-					// 分页检查 (Bullet Line)
-					if yPos+estHeight > 5.2 {
-						newSlide()
-						textX = 0.7
-						textWidth = 8.5
-						// hasSideImg 已重置
-						estHeight, _ = estimateLines(text, opts.BodyFontSize, textWidth)
-					}
-
-					slide.AddText(text, TextOptions{
-						X:         textX,
-						Y:         yPos,
-						Width:     textWidth,
-						Height:    estHeight,
-						FontSize:  opts.BodyFontSize,
-						FontColor: lineColor,
-					})
-
-					// 总是更新 yPos
-					if yPos+estHeight+0.15 > yPos {
-						yPos += estHeight + 0.15
-					}
-				}
-
-			case "code":
-				lines := strings.Split(block.text, "\n")
-				codeHeight := float64(len(lines)) * 0.35
-				if codeHeight < 0.5 {
-					codeHeight = 0.5
-				}
-				if codeHeight > 3.5 {
-					codeHeight = 3.5
-				}
-
-				slide.AddShape(ShapeRect, ShapeOptions{
-					X:         0.5,
-					Y:         yPos,
-					Width:     9.0,
-					Height:    codeHeight + 0.2,
-					Fill:      opts.CodeBackground,
-					LineColor: "#CCCCCC",
-					LineWidth: 1,
-				})
-
-				slide.AddText(block.text, TextOptions{
-					X:         0.6,
-					Y:         yPos + 0.1,
-					Width:     8.8,
-					Height:    codeHeight,
-					FontSize:  opts.CodeFontSize,
-					FontFace:  "Consolas",
-					FontColor: "#333333",
-				})
-				yPos += codeHeight + 0.4
-
-			case "image":
-				// 如果当前有侧边图片且又要加图片，先强制换行
-				if hasSideImg && block.styleY == 0 && (block.imageLayout == "left" || block.imageLayout == "right") {
-					if yPos < sideImgY+sideImgH {
-						yPos = sideImgY + sideImgH + 0.2
-					}
-					hasSideImg = false
-				}
-
-				// 解析图片来源
-				imageData, imageExt := parseImageSrc(block.imageSrc)
-				if len(imageData) > 0 {
-					var imgWidth, imgHeight, imgX, imgY float64
-					updateYPos := true
-
-					// 默认设置
-					imgWidth = 5.0
-					imgHeight = 2.8
-					if block.imageWidth > 0 && block.imageHeight > 0 {
-						imgWidth = float64(block.imageWidth) / 96.0
-						imgHeight = float64(block.imageHeight) / 96.0
-					}
-
-					fmt.Fprintf(os.Stderr, "DEBUG: Image Block Layout=%s SrcW=%d SrcH=%d CalcW=%.2f CalcH=%.2f\n", block.imageLayout, block.imageWidth, block.imageHeight, imgWidth, imgHeight)
-
-					// 分页检查 (Image)
-					if yPos+imgHeight > 5.2 && block.styleY == 0 {
-						newSlide()
-						// yPos 已重置为 0.5
-					}
-
-					switch block.imageLayout {
-					case "left":
-						hasSideImg = true
-						sideImgPos = "left"
-
-						// 限制侧边栏最大宽度 4.2
-						if imgWidth > 4.2 {
-							ratio := imgHeight / imgWidth
-							imgWidth = 4.2
-							imgHeight = imgWidth * ratio
-						}
-						// 如果未指定宽度，使用默认优化尺寸
-						if block.imageWidth == 0 {
-							imgWidth = 4.2
-							imgHeight = 2.6
-						}
-
-						imgX = 0.5
-						imgY = yPos
-						sideImgY = yPos
-						sideImgH = imgHeight
-						updateYPos = false // 文字流继续，不占用Y
-
-					case "right":
-						hasSideImg = true
-						sideImgPos = "right"
-
-						// 限制侧边栏最大宽度 4.2
-						if imgWidth > 4.2 {
-							ratio := imgHeight / imgWidth
-							imgWidth = 4.2
-							imgHeight = imgWidth * ratio
-						}
-						if block.imageWidth == 0 {
-							imgWidth = 4.2
-							imgHeight = 2.6
-						}
-
-						imgX = 5.3
-						imgY = yPos
-						sideImgY = yPos
-						sideImgH = imgHeight
-						updateYPos = false // 文字流继续，不占用Y
-
-					case "top":
-						// 限制顶部图片最大宽度 9.0，高度 3.5
-						if imgWidth > 9.0 {
-							ratio := imgHeight / imgWidth
-							imgWidth = 9.0
-							imgHeight = imgWidth * ratio
-						}
-						if imgHeight > 4.0 {
-							ratio := imgWidth / imgHeight
-							imgHeight = 4.0
-							imgWidth = imgHeight * ratio
-						}
-
-						if block.imageWidth == 0 {
-							imgWidth = 3.5
-							imgHeight = 2.0
-						}
-
-						imgX = (10.0 - imgWidth) / 2
-						imgY = yPos
-						updateYPos = true
-						hasSideImg = false
-
-					default: // center
-						if imgWidth > 8.0 {
-							ratio := imgHeight / imgWidth
-							imgWidth = 8.0
-							imgHeight = imgWidth * ratio
-						}
-						if imgHeight > 5.0 {
-							ratio := imgWidth / imgHeight
-							imgHeight = 5.0
-							imgWidth = imgHeight * ratio
-						}
-
-						imgX = (10.0 - imgWidth) / 2
-						imgY = yPos
-						updateYPos = true
-						hasSideImg = false
-					}
-
-					fmt.Fprintf(os.Stderr, "DEBUG: Final Image X=%.2f Y=%.2f W=%.2f H=%.2f\n", imgX, imgY, imgWidth, imgHeight)
-
-					// 自定义位置覆盖
-					if block.styleX > 0 {
-						imgX = block.styleX
-					}
-					if block.styleY > 0 {
-						imgY = block.styleY
-						// 注意：之前这里强制 updateYPos=false，导致后续文本重叠。
-						// 现在移除强制 false，遵循 block.imageLayout 的决定。
-						// 如果是 left/right，updateYPos 已经是 false。
-						// 如果是 center/top，updateYPos 是 true -> 更新到 yPos + height，防止重叠。
-					}
-
-					// 边界检查与修正 (Overflow Protection)
-					const padding = 0.5
-					const maxWidth = 10.0
-					const maxHeight = 5.625
-
-					// X轴溢出检查
-					if imgX+imgWidth > maxWidth-padding {
-						// 尝试左移
-						if maxWidth-padding-imgWidth > padding {
-							imgX = maxWidth - padding - imgWidth
-						} else {
-							// 空间不足，缩小图片
-							newWidth := maxWidth - padding - imgX
-							if newWidth < 1.0 {
-								newWidth = 1.0
-							} // 最小宽度保护
-							ratio := imgHeight / imgWidth
-							imgWidth = newWidth
-							imgHeight = imgWidth * ratio
-						}
-					}
-
-					// Y轴溢出分页 (已在前面 estimate 检查过，但如果是 absolute 导致变化，再次检查)
-					if imgY+imgHeight > 5.2 && block.styleY > 0 {
-						// 如果是绝对定位导致超出，我们只能缩放或接受?
-						// 或者尝试 shrink
-						availableH := 5.2 - imgY
-						if availableH > 1.0 {
-							newHeight := availableH
-							ratio := imgWidth / imgHeight
-							imgHeight = newHeight
-							imgWidth = newHeight * ratio
-						}
-					}
-
-					fmt.Fprintf(os.Stderr, "DEBUG: Final Image X=%.2f Y=%.2f W=%.2f H=%.2f Rounding=%.2f\n", imgX, imgY, imgWidth, imgHeight, block.borderRadius)
-
-					slide.AddImage(ImageOptions{
-						Data:     imageData,
-						X:        imgX,
-						Y:        imgY,
-						Width:    imgWidth,
-						Height:   imgHeight,
-						AltText:  block.imageAlt,
-						Rounding: block.borderRadius,
-					})
-					_ = imageExt
-
-					if updateYPos {
-						// 如果是绝对定位，我们检查到底部
-						// 确保 yPos 移动到图片下方，防止挡住后续文字
-						if imgY+imgHeight+0.3 > yPos {
-							yPos = imgY + imgHeight + 0.3
-						}
-					} else if hasSideImg {
-						// side layout, don't update yPos fully, but ensure sideImgY/H track absolute updates
-						if block.styleY > 0 {
-							sideImgY = imgY
-							sideImgH = imgHeight
-						}
-					}
-				}
-
-			case "table":
-				if len(block.tableRows) > 0 {
-					// 构建表格单元格
-					var tableCells [][]TableCell
-					for i, row := range block.tableRows {
-						var cellRow []TableCell
-						for _, cell := range row {
-							tc := TableCell{
-								Text: cell,
-							}
-							// 第一行加粗
-							if i == 0 {
-								tc.Bold = true
-							}
-							cellRow = append(cellRow, tc)
-						}
-						tableCells = append(tableCells, cellRow)
-					}
-
-					rowCount := len(tableCells)
-					tableHeight := float64(rowCount) * 0.4
-					if tableHeight > 3.0 {
-						tableHeight = 3.0
-					}
-
-					// 分页检查 (Table)
-					if yPos+tableHeight > 5.2 {
-						newSlide()
-					}
-
-					// 处理左右布局
-					tableX := 0.5
-					tableWidth := 9.0
-					if hasSideImg && block.styleX == 0 {
-						tableWidth = 4.5
-						if sideImgPos == "left" {
-							tableX = 5.0
-						} else {
-							tableX = 0.5
-						}
-					}
-					if block.styleX > 0 {
-						tableX = block.styleX
-					}
-
-					slide.AddTable(tableCells, TableOptions{
-						X:            tableX,
-						Y:            yPos,
-						Width:        tableWidth,
-						FirstRowBold: true,
-						FirstRowFill: "#E6E6E6",
-					})
-					yPos += tableHeight + 0.3
-				}
+			if block.blockType == "image" && (block.imageLayout == "left" || block.imageLayout == "right") {
+				floats = append(floats, block)
+				hasFloats = true
+			} else {
+				flow = append(flow, block)
 			}
 		}
+		if hasFloats {
+			// Reconstruct content with floats first
+			htmlSlide.content = append(floats, flow...)
+		}
+
+		// Two-Pass Strategy
+		// 1. Dry Run / Measure
+		// Two-Pass Strategy
+		// 1. Dry Run / Measure
+		scale := 1.0
+
+		// Measure total height
+		// Use a COPY of state or temp state initialized with current yPos
+		dryRunState := &renderState{
+			yPos:       state.yPos,
+			hasSideImg: state.hasSideImg, // Should be false initially usually
+			sideImgY:   state.sideImgY,
+			sideImgH:   state.sideImgH,
+		}
+		newSlideNoOp := func() {} // Do nothing on dry run split (won't trigger if disabled anyway)
+
+		for _, block := range htmlSlide.content {
+			renderBlock(pres, slide, block, opts, dryRunState, 1.0, true, newSlideNoOp)
+		}
+
+		totalHeight := dryRunState.yPos
+		// Debug
+		fmt.Fprintf(os.Stderr, "DEBUG: Slide '%s' Total Height=%.2f\n", htmlSlide.title, totalHeight)
+
+		if totalHeight > 5.6 {
+			// Calculate scale
+			// Target is ~5.5 to leave some margin
+			scale = 5.5 / totalHeight
+			fmt.Fprintf(os.Stderr, "DEBUG: Auto-Scaling trigger! Scale=%.2f\n", scale)
+		}
+
+		// 2. Render Pass
+		// Reset state for actual render
+		// If title was added, yPos should be updated?
+		// Wait, title logic (lines 716+) happens BEFORE this block.
+		// If we reset yPos here, we overwrite the title space or draw over it?
+		// The original code reset yPos to 0.5 INSIDE the content loop?
+		// No, original code:
+		// newSlide sets yPos=0.5
+		// AddTitle sets yPos+=1.0 => yPos=1.5
+		// Then content loop starts with yPos=1.5
+
+		// My Two-Pass logic in Step 121:
+		// 1. Dry Run (starts with yPos=0.5, simulates title?)
+		// Wait, the dry run loop `for _, block := range htmlSlide.content` checks CONTENT height.
+		// It assumes yPos starts where title left off?
+		// Yes, I need to init dry run state with current state.yPos (which includes Title space).
+		// AND for Render Pass, I should NOT reset to 0.5, but keep the current state.yPos!
+
+		// Fixing logic:
+
+		// Update helper to use state
+		newSlideWrapper := func() {
+			newSlide()
+			// Sync state back after new slide
+			state.yPos = 0.5
+			state.hasSideImg = false
+			state.sideImgY = 0
+			state.sideImgH = 0
+		}
+
+		for _, block := range htmlSlide.content {
+			renderBlock(pres, slide, block, opts, state, scale, false, newSlideWrapper)
+		}
+
+		// Create new slides if needed (handled by newSlideWrapper inside renderBlock if not disabled)
 	}
 
 	return pres
@@ -1359,4 +983,37 @@ func (p *htmlParser) getFontSize(n *html.Node, styleMap map[string]string) float
 	}
 	f, _ := strconv.ParseFloat(valStr, 64)
 	return f
+}
+
+// extractHexColor 从字符串中提取 Hex 颜色 (例如从 gradient 中提取第一个颜色)
+func extractHexColor(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	// 如果已经是 #xxxxxx 格式
+	if strings.HasPrefix(s, "#") {
+		// 可能是简单的 hex color
+		return s
+	}
+
+	// 使用正则查找 #xxxxxx 或 #xxx
+	// 优先找 6位 hex
+	hexRegex6 := regexp.MustCompile(`#([0-9a-fA-F]{6})`)
+	if match := hexRegex6.FindString(s); match != "" {
+		return match
+	}
+	// 其次找 3位 hex
+	hexRegex3 := regexp.MustCompile(`#([0-9a-fA-F]{3})`)
+	if match := hexRegex3.FindString(s); match != "" {
+		return match
+	}
+
+	// 如果没有 hex，也许是 rgb/rgba? 暂时不支持解析 rgb 字符串到 hex
+	// 如果本来就是 blue/red 这种名称，直接返回
+	if !strings.Contains(s, "(") && !strings.Contains(s, " ") {
+		return s
+	}
+
+	return ""
 }

@@ -12,65 +12,90 @@ import (
 	"github.com/CoolBanHub/genppt"
 	"github.com/cloudwego/eino-ext/components/model/gemini"
 	"github.com/cloudwego/eino/schema"
-	"github.com/gookit/slog"
+	"github.com/golang/glog"
 	"github.com/joho/godotenv"
 	"google.golang.org/genai"
 )
 
-// 系统提示词：让 AI 生成适合转 PPT 的 HTML 代码
-const systemPrompt = `你是专业的演示文稿设计师。根据用户主题生成HTML格式的PPT。
+// 设计方案生成提示词模板
+const designPromptTemplate = `你是一位顶尖的演示文稿设计师。用户的需求是：“{{.UserReq}}”。
 
-## 幻灯片尺寸约束（重要）
-- 页面尺寸：宽960像素 x 高540像素（16:9）
-- 标题区域：顶部80像素
-- 内容区域：剩余约460像素高度
+请为这个主题制订一份详尽的【PPT设计方案】。你的输出必须包含以下四个部分，并使用 Markdown 格式：
 
-## HTML结构规则
-1. <h1> 创建新幻灯片，作为页面标题
-2. <h2> 内容小标题
-3. <p> 段落文字（简短）
-4. <ul>/<li> 列表
-5. <table> 表格（最多4行）
+1. **设计风格定位**：描述整体视觉氛围（如：极简商务、温馨童趣、赛博朋克等）。
+2. **色彩方案**：
+   - 提供 1 个背景主导色（Hex code）。
+   - 提供 1 个标题主色（Hex code）。
+   - 提供 2-3 个辅助色（Hex code）。
+3. **字体与排版规范**：
+   - 建议标题和正文的字体族。
+   - 建议标题和正文的字号（像素）。
+   - 建议边距（Margin）。
+4. **内容结构规划**：
+   - 规划约 10-15 页的具体章节（如：封面、目录、核心章节1、2、3...、致谢）。
+
+你的输出将直接作为下一阶段 HTML 生成的指导手册。请确保方案专业、高级且极具视觉美感。`
+
+// HTML 生成系统提示词模板
+const htmlSystemPromptTemplate = `你是专业的网页设计师和 PPT 专家。根据以下【设计方案】生成对应的 HTML 格式 PPT 内容。
+
+## 设计方案指导 (必须严格遵循风格、色彩和结构)
+{{.DesignPlan}}
+
+## 幻灯片尺寸约束 (重要)
+- 页面尺寸：宽960像素 x 高540像素 (16:9, 宽10in x 高5.625in)
+- 安全边距：上/下 60px, 左/右 80px。
+- 页面尺寸：宽960像素 x 高540像素 (16:9, 宽10in x 高5.625in)
+- 安全边距：上/下 60px, 左/右 80px。
+- 只有 <h1> 标签触发新幻灯片。
+
+## 幻灯片内容约束 (极重要 - 防止溢出)
+1. **精简原则**：每页文字不宜过多，保持留白。
+2. **字数限制**：
+   - <p> 段落最多 3 行（约 80 字）。
+   - <ul> 列表最多 5 项。
+   - <li> 每项内容不超过 1 行。
+3. **图文平衡**：如果页面包含大图（如左图右文），文字量必须减半。
+4. **禁止**：禁止生成长篇大论的演讲稿，只保留核心要点。
+
+## HTML 结构规则
+1. <h1>: 创建新幻灯片，作为页面标题（支持 style 控制颜色和对齐）。
+2. <h2>: 内容小标题。
+3. <p>: 段落文字（建议 24px-28px）。
+4. <ul>/<li>: 列表。
+5. <table>: 表格（尽量精简，最多4-5行）。
 
 ## 图片规则
 - 格式：<img src="" style="..." data-prompt="画面描述" alt="画面描述">
-- 关键规则（src与data-prompt二选一）：
-  - 场景A（AI生成图片）：src 必须为空 (src="")，且必须提供 data-prompt 描述画面。
-  - 场景B（使用现有图片）：src 填入有效 URL，此时 data-prompt 应为空或省略。
+- 关键规则：
+  - AI 生成模式：src 必须为空 (src="")，且必须由你提供详细的 data-prompt。
+  - 描述应具体：例如 "一群快乐的孩子在装饰元旦树，温馨卡通插画风格，#D93A3A 主色调"。
 - 布局选项 (style="float:...")：
   - 默认：居中在文字下方（350x200像素）
-  - style="float: right"：右侧（300x180像素）
-  - style="float: left"：左侧（300x180像素）
+  - style="float: right": 右侧（300x180像素）
+  - style="float: left": 左侧（300x180像素）
 
-## 高级定位（可选）：
-- 所有元素（图片、文字）均支持 style 属性进行绝对定位
-- 必须使用 px 单位 (96px = 1 inch)，或者 in 单位
-- 页面尺寸：960x540像素 (宽10in x 高5.625in)
-- 示例：<img src="" style="position: absolute; left: 576px; top: 144px; width: 288px;" ...>
+## 高级定位与样式 (可选)
+- 支持 <div style="position: absolute; left: 100px; top: 150px; ..."> 进行高级排版。
+- 必须使用 px 单位 (96px = 1 inch) 或 in 单位。
+- 所有样式必须通过 inline style 表达。
 
-## 文字样式（可选）：
-- 使用 standard CSS style 属性
-- 示例：<p style="color: #FF0000; font-size: 24px;">强调文字</p>
+## 内容要求
+- 总页数必须符合【设计方案】中的规划（约 10-15 页）。
+- 内容必须详实丰富，禁止简略。
 
-## 设计原则（关键）：
-- 只有 <h1> 标签才会触发新幻灯片。
-- 如果内容较多，请使用多个 <h1> 分成多页展示。
-- 混合使用不同布局，避免单调。
+只输出 HTML 代码，不包含 Markdown 标记。
 
-只输出HTML代码。
+示例结构：
+<h1>欢迎页标题</h1>
+<img src="" style="float: top" data-prompt="符合风格的封面背景图" alt="封面">
+<p style="font-size: 28px; color: #D93A3A;">副标题或欢迎语</p>
 
-示例：
-<h1>欢迎页</h1>
-<img src="" style="float: top" data-prompt="背景图片" alt="背景">
-<p style="font-size: 24px">欢迎参加！</p>
-
-<h1>内容页</h1>
-<!-- 右侧布局示例 -->
-<img src="" style="float: right" data-prompt="插图" alt="插图">
-<h2>副标题</h2>
+<h1>目录</h1>
 <ul>
-<li>要点一</li>
-<li>要点二</li>
+<li>1. 活动概述</li>
+<li>2. 活动方案</li>
+...
 </ul>`
 
 var (
@@ -83,22 +108,32 @@ func main() {
 	htmlPath := flag.String("html", "", "Path to input HTML file (if provided, AI generation is skipped)")
 	outPath := flag.String("out", "output.pptx", "Path to output PPTX file")
 	flag.Parse()
-	fmt.Println("DEBUG: Program started with html:", *htmlPath)
+	defer glog.Flush()
+	glog.V(2).Info("DEBUG: Program started with html:", *htmlPath)
 
-	// 加载环境变量
+	// 加载环境变量 (使用 Overload 确保 .env 中的配置覆盖系统已有的空值)
 	if err := godotenv.Load(); err != nil {
-		slog.Warnf("警告: 无法加载 .env 文件: %v", err)
+		glog.V(2).Infof("未发现 .env 文件或加载失败 (将使用系统环境变量): %v", err)
+	} else {
+		glog.V(2).Info(".env 配置文件加载成功")
 	}
 
 	ctx := context.Background()
+	apiKey := os.Getenv("GOOGLE_API_KEY")
+	if apiKey == "" {
+		glog.Error("错误: 未发现 GOOGLE_API_KEY，请确保 .env 文件配置正确或已设置环境变量")
+		if *htmlPath == "" {
+			return
+		}
+	}
 
 	// 创建 Gemini 客户端
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  os.Getenv("GOOGLE_API_KEY"),
+		APIKey:  apiKey,
 		Backend: genai.BackendVertexAI,
 	})
 	if err != nil {
-		slog.Error("创建gemini客户端失败", "err", err)
+		glog.Errorf("创建gemini客户端失败: %v", err)
 		if *htmlPath == "" {
 			return
 		}
@@ -111,7 +146,7 @@ func main() {
 			Model:  "gemini-3-flash-preview",
 		})
 		if err != nil {
-			slog.Error("创建文字模型失败", "err", err)
+			glog.Errorf("创建文字模型失败: %v", err)
 			if *htmlPath == "" {
 				return
 			}
@@ -128,7 +163,7 @@ func main() {
 			},
 		})
 		if err != nil {
-			slog.Error("创建图片模型失败", "err", err)
+			glog.Errorf("创建图片模型失败: %v", err)
 			if *htmlPath == "" {
 				return
 			}
@@ -140,37 +175,46 @@ func main() {
 	var finalHTML string
 
 	if *htmlPath != "" {
-		slog.Infof("从文件读取 HTML: %s", *htmlPath)
+		glog.V(1).Infof("从文件读取 HTML: %s", *htmlPath)
 		content, err := os.ReadFile(*htmlPath)
 		if err != nil {
-			slog.Error("读取 HTML 文件失败", "err", err)
+			glog.Errorf("读取 HTML 文件失败: %v", err)
 			return
 		}
 		htmlContent := string(content)
 		// Process images even if reading from file, to ensure src overwrites work if alt exists
 		// But usually local HTML might already have valid src.
 		// For our test case, we want to test image replacement.
-		slog.Info("Step 2: 提取图片需求并生成图片...")
+		glog.V(1).Info("Step 2: 提取图片需求并生成图片...")
 		finalHTML = processImages(ctx, htmlContent)
 	} else {
-		// AI Generation Flow
-		userReq := "帮我生成一个幼儿园2026元旦活动的PPT。要求：\n1. 内容适合幼儿园小朋友，语言生动有趣。\n2. 每页内容不要太多，建议包含标题、最多4个简短要点和1张相关的插图。\n3. 内容要丰富，包含活动安排、手工制作、美食分享和安全注意事项。"
+		// Dynamic Generation Flow
+		userReq := "幼儿园2026元旦活动方案"
+		glog.Infof("开始为主题生成 PPT: %s", userReq)
 
-		slog.Infof("开始生成 PPT: %s", userReq)
+		// Step 1: 生成设计方案
+		glog.Info("Step 1: 正在生成 PPT 设计方案...")
+		designPlan := generateDesignPlan(ctx, userReq)
+		if designPlan == "" {
+			glog.Error("设计方案生成失败")
+			return
+		}
+		os.WriteFile("design_plan.md", []byte(designPlan), 0644)
+		glog.V(1).Info("设计方案已保存: design_plan.md")
 
-		// Step 1: 让 AI 生成 HTML 代码
-		slog.Info("Step 1: AI 生成 HTML 内容...")
-		htmlContent := generateHTML(ctx, userReq)
+		// Step 2: 根据设计方案生成 HTML
+		glog.Info("Step 2: 正在根据设计方案生成 HTML 内容...")
+		htmlContent := generateHTML(ctx, designPlan)
 		if htmlContent == "" {
-			slog.Error("HTML 生成失败")
+			glog.Error("HTML 生成失败")
 			return
 		}
 		// 保存原始HTML
 		os.WriteFile("output_original.html", []byte(htmlContent), 0644)
-		slog.Info("已保存原始HTML: output_original.html")
+		glog.V(2).Info("已保存原始HTML: output_original.html")
 
-		// Step 2: 提取图片需求并生成图片
-		slog.Info("Step 2: 提取图片需求并生成图片...")
+		// Step 3: 提取图片需求并生成图片
+		glog.Info("Step 3: 提取图片需求并生成图片...")
 		finalHTML = processImages(ctx, htmlContent)
 
 		// 保存最终HTML
@@ -178,27 +222,42 @@ func main() {
 	}
 
 	// Step 4: 转换 HTML 为 PPT
-	slog.Info("Step 4: 转换 HTML 为 PPT...")
-	pres := genppt.FromHTML(finalHTML)
+	glog.V(1).Info("Step 4: 转换 HTML 为 PPT...")
+	opts := genppt.DefaultHTMLOptions()
+	pres := genppt.FromHTMLWithOptions(finalHTML, opts)
 
 	// 保存PPT文件
 	outputFile := *outPath
 	if err := pres.WriteFile(outputFile); err != nil {
-		slog.Error("保存PPT失败", "err", err)
+		glog.Errorf("保存PPT失败: %v", err)
 		return
 	}
 
-	slog.Infof("✅ PPT生成成功: %s (共%d页)", outputFile, pres.SlideCount())
+	glog.Infof("✅ PPT生成成功: %s (共%d页)", outputFile, pres.SlideCount())
 }
 
-// generateHTML 让 AI 生成 HTML 代码
-func generateHTML(ctx context.Context, topic string) string {
+// generateDesignPlan 生成 PPT 设计方案
+func generateDesignPlan(ctx context.Context, userReq string) string {
+	prompt := strings.Replace(designPromptTemplate, "{{.UserReq}}", userReq, 1)
 	msg, err := textModel.Generate(ctx, []*schema.Message{
-		{Role: schema.System, Content: systemPrompt},
-		{Role: schema.User, Content: "请为以下主题生成一份演示文稿HTML：" + topic},
+		{Role: schema.User, Content: prompt},
 	})
 	if err != nil {
-		slog.Errorf("HTML生成失败: %v", err)
+		glog.Errorf("设计方案生成失败: %v", err)
+		return ""
+	}
+	return msg.Content
+}
+
+// generateHTML 根据设计方案生成 HTML 代码
+func generateHTML(ctx context.Context, designPlan string) string {
+	systemPrompt := strings.Replace(htmlSystemPromptTemplate, "{{.DesignPlan}}", designPlan, 1)
+	msg, err := textModel.Generate(ctx, []*schema.Message{
+		{Role: schema.System, Content: systemPrompt},
+		{Role: schema.User, Content: "请根据上述设计方案生成一份演示文稿 HTML。"},
+	})
+	if err != nil {
+		glog.Errorf("HTML生成失败: %v", err)
 		return ""
 	}
 
@@ -227,7 +286,7 @@ func processImages(ctx context.Context, html string) string {
 			validMatches++
 		}
 	}
-	slog.Infof("找到 %d 张图片需要生成", validMatches)
+	glog.V(2).Infof("找到 %d 张图片需要生成", validMatches)
 
 	result := html
 	count := 0
@@ -243,7 +302,7 @@ func processImages(ctx context.Context, html string) string {
 
 		// 如果 src 不为空，则跳过生成（用户要求：src存在图片地址就不需要生成）
 		if srcVal != "" {
-			slog.Infof("图片已存在 src，跳过生成: %s", truncateString(srcVal, 30))
+			glog.V(3).Infof("图片已存在 src，跳过生成: %s", truncateString(srcVal, 30))
 			continue
 		}
 
@@ -276,7 +335,7 @@ func processImages(ctx context.Context, html string) string {
 		}
 
 		count++
-		slog.Infof("正在生成图片 %d/%d: %s", count, validMatches, truncateString(prompt, 30))
+		glog.V(2).Infof("正在生成图片 %d/%d: %s", count, validMatches, truncateString(prompt, 30))
 
 		// 生成图片
 		imageData := generateImage(ctx, prompt)
@@ -306,9 +365,9 @@ func processImages(ctx context.Context, html string) string {
 			// 这在一般 PPT 生成场景下概率较低（alt 通常不同），但为了严谨可以使用 Replace(..., 1) 配合 split 处理
 			// 简单起见，这里假设 AI 生成的 alt 不重复，或者重复时替换也没问题
 			result = strings.Replace(result, tag, newTag, 1)
-			slog.Infof("图片 %d 生成成功", count)
+			glog.V(2).Infof("图片 %d 生成成功", count)
 		} else {
-			slog.Warnf("图片 %d 生成失败", count)
+			glog.Warningf("图片 %d 生成失败", count)
 		}
 	}
 
@@ -318,7 +377,7 @@ func processImages(ctx context.Context, html string) string {
 // generateImage 使用 AI 生成图片，返回 data URI
 func generateImage(ctx context.Context, prompt string) string {
 	if imageModel == nil {
-		slog.Warn("Image model not initialized, skipping image generation")
+		glog.Warning("Image model not initialized, skipping image generation")
 		return ""
 	}
 	msg, err := imageModel.Generate(ctx, []*schema.Message{
@@ -330,7 +389,7 @@ func generateImage(ctx context.Context, prompt string) string {
 		},
 	})
 	if err != nil {
-		slog.Warnf("图片生成API调用失败: %v", err)
+		glog.Warningf("图片生成API调用失败: %v", err)
 		return ""
 	}
 
@@ -340,7 +399,7 @@ func generateImage(ctx context.Context, prompt string) string {
 			// 验证 base64 是否有效
 			_, err := base64.StdEncoding.DecodeString(*part.Image.Base64Data)
 			if err != nil {
-				slog.Warnf("Base64数据无效: %v", err)
+				glog.Warningf("Base64数据无效: %v", err)
 				continue
 			}
 
@@ -392,15 +451,15 @@ func saveImageFile(dataURI string, index int) {
 	b64Data := dataURI[commaIdx+1:]
 	data, err := base64.StdEncoding.DecodeString(b64Data)
 	if err != nil {
-		slog.Warnf("图片解码失败: %v", err)
+		glog.Warningf("图片解码失败: %v", err)
 		return
 	}
 
 	// 保存文件
 	filename := fmt.Sprintf("image_%d.%s", index, ext)
 	if err := os.WriteFile(filename, data, 0644); err != nil {
-		slog.Warnf("保存图片失败: %v", err)
+		glog.Warningf("保存图片失败: %v", err)
 		return
 	}
-	slog.Infof("已保存图片: %s", filename)
+	glog.V(2).Infof("已保存图片: %s", filename)
 }

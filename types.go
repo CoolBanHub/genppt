@@ -94,15 +94,18 @@ type TableCell struct {
 
 // ImageOptions 图片选项
 type ImageOptions struct {
-	X        float64 // X坐标（英寸）
-	Y        float64 // Y坐标（英寸）
-	Width    float64 // 宽度（英寸）
-	Height   float64 // 高度（英寸）
-	Path     string  // 本地文件路径
-	Data     []byte  // 图片数据（与Path二选一）
-	AltText  string  // 替代文本
-	Rotate   float64 // 旋转角度（度）
-	Rounding float64 // 圆角半径（英寸），0为直角
+	X               float64 // X坐标（英寸）
+	Y               float64 // Y坐标（英寸）
+	Width           float64 // 宽度（英寸）
+	Height          float64 // 高度（英寸）
+	Path            string  // 本地文件路径
+	Data            []byte  // 图片数据（与Path二选一）
+	AltText         string  // 替代文本
+	Rotate          float64 // 旋转角度（度）
+	Rounding        float64 // 圆角半径（英寸），0为直角
+	CodeBackground  string  // 代码背景色
+	SlideBackground string  // 幻灯片背景色
+	ImageRounding   float64 // 图片圆角（英寸），默认0
 }
 
 // BackgroundOptions 背景选项
