@@ -8,11 +8,12 @@
 - ✅ **文本支持** - 多种字体、颜色、对齐方式
 - ✅ **形状支持** - 矩形、圆形、箭头等多种形状
 - ✅ **表格支持** - 完整的表格功能，支持合并单元格
-- ✅ **图片支持** - PNG、JPEG、GIF等格式
+- ✅ **图片支持** - PNG、JPEG、GIF等格式，支持本地文件、URL、Base64
 - ✅ **图表支持** - 柱状图、折线图、饼图、环形图、面积图
 - ✅ **视频支持** - MP4、MOV、AVI等格式
 - ✅ **音频支持** - MP3、WAV、M4A等格式，支持背景音乐
 - ✅ **Markdown支持** - 从Markdown直接生成PPT
+- ✅ **HTML支持** - 从HTML直接生成PPT
 - ✅ **多种导出** - 文件、字节数组、io.Writer
 
 ## 安装
@@ -274,6 +275,76 @@ pres := genppt.FromMarkdownWithOptions(markdown, opts)
 pres, err := genppt.FromMarkdownFile("presentation.md")
 if err != nil {
 log.Fatal(err)
+}
+pres.WriteFile("output.pptx")
+```
+
+## HTML 支持
+
+GenPPT 支持从 HTML 直接生成 PPT！
+
+### 基本用法
+
+```go
+html := `
+<h1>第一张幻灯片</h1>
+<p>这是内容。</p>
+
+<h1>第二张幻灯片</h1>
+<ul>
+    <li>列表项1</li>
+    <li>列表项2</li>
+</ul>
+`
+
+pres := genppt.FromHTML(html)
+pres.WriteFile("output.pptx")
+```
+
+### 支持的 HTML 元素
+
+| 元素 | 效果 |
+|------|------|
+| `<h1>` | 创建新幻灯片 |
+| `<h2>`-`<h6>` | 内容标题 |
+| `<p>` | 普通文本 |
+| `<ul>/<ol>/<li>` | 列表项 |
+| `<pre>/<code>` | 代码块 |
+| `<table>` | 表格 |
+| `<img>` | 图片（支持本地路径、URL、Base64） |
+| `<hr>/<section>` | 分隔符（新幻灯片） |
+
+### 图片来源支持
+
+```html
+<!-- 本地文件 -->
+<img src="./image.png">
+
+<!-- URL下载 -->
+<img src="https://example.com/image.png">
+
+<!-- Base64 -->
+<img src="data:image/png;base64,iVBORw0KGgo...">
+```
+
+### 自定义样式
+
+```go
+opts := genppt.DefaultHTMLOptions()
+opts.TitleFontSize = 48
+opts.HeadingColor = "#FFFFFF"
+opts.BodyColor = "#E0E0E0"
+opts.SlideBackground = "#1A1A2E"
+
+pres := genppt.FromHTMLWithOptions(html, opts)
+```
+
+### 从文件读取
+
+```go
+pres, err := genppt.FromHTMLFile("presentation.html")
+if err != nil {
+    log.Fatal(err)
 }
 pres.WriteFile("output.pptx")
 ```

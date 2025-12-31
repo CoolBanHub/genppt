@@ -376,16 +376,19 @@ func FromMarkdownWithOptions(markdown string, opts MarkdownOptions) *Presentatio
 				yPos += codeHeight + 0.4
 
 			case "image":
-				// 添加图片
-				slide.AddImage(ImageOptions{
-					Path:    block.imagePath,
-					X:       1.0,
-					Y:       yPos,
-					Width:   8.0,
-					Height:  3.0,
-					AltText: block.imageAlt,
-				})
-				yPos += 3.2
+				// 添加图片（支持本地路径、URL、Base64）
+				imageData, _ := parseImageSrc(block.imagePath)
+				if len(imageData) > 0 {
+					slide.AddImage(ImageOptions{
+						Data:    imageData,
+						X:       1.0,
+						Y:       yPos,
+						Width:   8.0,
+						Height:  3.0,
+						AltText: block.imageAlt,
+					})
+					yPos += 3.2
+				}
 			}
 		}
 	}
