@@ -2,6 +2,7 @@ package genppt
 
 import (
 	"fmt"
+	"strings"
 )
 
 // EMU (English Metric Units) 常量
@@ -35,6 +36,7 @@ type TextOptions struct {
 	LineSpacing float64       // 行间距（倍数）
 	Rotate      float64       // 旋转角度（度）
 	Margin      float64       // 内边距（英寸）
+	Fill        string        // 文本框背景色（十六进制），为空则无填充
 }
 
 // ShapeOptions 形状选项
@@ -196,12 +198,48 @@ func CMToEMU(cm float64) int64 {
 	return int64(cm * EMUPerCM)
 }
 
-// ParseColor 解析颜色字符串，移除#前缀
+// ParseColor 解析颜色字符串，处理#前缀和3位简写
 func ParseColor(color string) string {
-	if len(color) > 0 && color[0] == '#' {
-		return color[1:]
+	if color == "" {
+		return "000000"
 	}
-	return color
+
+	// 处理颜色名
+	switch strings.ToLower(color) {
+	case "red":
+		return "FF0000"
+	case "green":
+		return "00FF00"
+	case "blue":
+		return "0000FF"
+	case "black":
+		return "000000"
+	case "white":
+		return "FFFFFF"
+	case "yellow":
+		return "FFFF00"
+	case "orange":
+		return "FFA500"
+	case "purple":
+		return "800080"
+	case "gray", "grey":
+		return "808080"
+	}
+
+	c := color
+	if strings.HasPrefix(c, "#") {
+		c = c[1:]
+	}
+
+	// 处理 3 位 HEX (e.g. "F00" -> "FF0000")
+	if len(c) == 3 {
+		r := string(c[0])
+		g := string(c[1])
+		b := string(c[2])
+		return r + r + g + g + b + b
+	}
+
+	return c
 }
 
 // ValidateColor 验证颜色格式

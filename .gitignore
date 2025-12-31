@@ -28,6 +28,7 @@ Thumbs.db
 *.key
 *.log
 bin/
+*.exe
 
 # Develop tools
 .vscode/
@@ -36,3 +37,4 @@ bin/
 
 go.work
 go.work.sum
+.env

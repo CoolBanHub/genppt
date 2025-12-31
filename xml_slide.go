@@ -266,7 +266,15 @@ func (s *Slide) generateTextBox(t *textObject, id int) string {
 	sb.WriteString(`"/>`)
 	sb.WriteString(`</a:xfrm>`)
 	sb.WriteString(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>`)
-	sb.WriteString(`<a:noFill/>`)
+	if t.options.Fill != "" {
+		sb.WriteString(`<a:solidFill>`)
+		sb.WriteString(`<a:srgbClr val="`)
+		sb.WriteString(ParseColor(t.options.Fill))
+		sb.WriteString(`"/>`)
+		sb.WriteString(`</a:solidFill>`)
+	} else {
+		sb.WriteString(`<a:noFill/>`)
+	}
 	sb.WriteString(`</p:spPr>`)
 
 	// 文本框
@@ -804,11 +812,34 @@ func (s *Slide) generateImage(img *imageObject, id int) string {
 	sb.WriteString(`</a:xfrm>`)
 
 	// 如果有圆角
-	if img.options.Rounding > 0 {
+	if img.options.Rounding != 0 {
 		sb.WriteString(`<a:prstGeom prst="roundRect">`)
 		sb.WriteString(`<a:avLst>`)
+
+		// PowerPoint 的圆角 adj 值是相对于最小边的
+		// 100000 表示 100% 的最小边（即完全圆形）
+		// 实际上 adj 值通常在 0-50000 之间，50000 代表半径为短边的一半
+		minSide := cx
+		if cy < cx {
+			minSide = cy
+		}
+		adj := 0
+		if img.options.Rounding < 0 {
+			// 百分比情况：-0.5 = 50% -> 50000
+			adj = int(-img.options.Rounding * 100000)
+		} else {
+			// 英寸情况
+			radiusEMU := InchToEMU(img.options.Rounding)
+			if minSide > 0 {
+				adj = int((radiusEMU * 100000) / minSide)
+			}
+		}
+		if adj > 50000 {
+			adj = 50000
+		}
+
 		sb.WriteString(`<a:gd name="adj" fmla="val `)
-		sb.WriteString(itoa(int(img.options.Rounding * 10000)))
+		sb.WriteString(itoa(adj))
 		sb.WriteString(`"/>`)
 		sb.WriteString(`</a:avLst>`)
 		sb.WriteString(`</a:prstGeom>`)
