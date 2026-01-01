@@ -1,5 +1,5 @@
 module github.com/CoolBanHub/genppt
 
-go 1.22
+go 1.24
 
-require golang.org/x/net v0.34.0
+require golang.org/x/net v0.41.0

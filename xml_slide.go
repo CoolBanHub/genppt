@@ -297,7 +297,13 @@ func (s *Slide) generateTextBox(t *textObject, id int) string {
 		sb.WriteString(string(t.options.Align))
 		sb.WriteString(`"`)
 	}
-	sb.WriteString(`/>`)
+	sb.WriteString(`>`)
+	if t.options.LineSpacing > 0 {
+		sb.WriteString(`<a:lnSpc><a:spcPct val="`)
+		sb.WriteString(itoa(int(t.options.LineSpacing * 100000))) // 100% = 100000
+		sb.WriteString(`"/></a:lnSpc>`)
+	}
+	sb.WriteString(`</a:pPr>`)
 
 	// 文本运行
 	sb.WriteString(`<a:r>`)
@@ -315,6 +321,11 @@ func (s *Slide) generateTextBox(t *textObject, id int) string {
 	}
 	if t.options.Underline {
 		sb.WriteString(` u="sng"`)
+	}
+	if t.options.CharSpacing != 0 {
+		sb.WriteString(` spc="`)
+		sb.WriteString(itoa(int(t.options.CharSpacing * 100))) // 1pt = 100
+		sb.WriteString(`"`)
 	}
 	sb.WriteString(`>`)
 

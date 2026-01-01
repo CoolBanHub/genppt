@@ -34,6 +34,7 @@ type TextOptions struct {
 	Align       Align         // 水平对齐
 	VAlign      VerticalAlign // 垂直对齐
 	LineSpacing float64       // 行间距（倍数）
+	CharSpacing float64       // 字符间距（磅），0为默认
 	Rotate      float64       // 旋转角度（度）
 	Margin      float64       // 内边距（英寸）
 	Fill        string        // 文本框背景色（十六进制），为空则无填充
@@ -230,9 +231,7 @@ func ParseColor(color string) string {
 	}
 
 	c := color
-	if strings.HasPrefix(c, "#") {
-		c = c[1:]
-	}
+	c = strings.TrimPrefix(c, "#")
 
 	// 处理 3 位 HEX (e.g. "F00" -> "FF0000")
 	if len(c) == 3 {
